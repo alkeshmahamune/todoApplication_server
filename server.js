@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
 const { connectDB } = require("./db");
 const { PORT, JWT_SECRET } = require("./env");
 const bcrypt = require("bcryptjs");
@@ -10,16 +11,16 @@ const { Todo, User } = require("./schema");
 const COOKIE_NAME = "todo_token";
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 app.use(cors({ origin: true, credentials: true }));
 
 function getCookieToken(req) {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return null;
-  return cookieHeader.split(";").map(c => c.trim()).find(c => c.startsWith(`${COOKIE_NAME}=`))?.split("=")[1] || null;
+  return req.cookies?.[COOKIE_NAME] || null;
 }
 
 function setAuthCookie(res, token) {
   res.cookie(COOKIE_NAME, token, {
+    path: "/",
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -29,9 +30,11 @@ function setAuthCookie(res, token) {
 
 function clearAuthCookie(res) {
   res.clearCookie(COOKIE_NAME, {
+    path: "/",
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 0,
   });
 }
 
@@ -45,8 +48,7 @@ const apiBase = "/api/todos";
 
 // --- Auth middleware
 function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const auth = authHeader?.split(" ")[1] || getCookieToken(req);
+  const auth = getCookieToken(req);
   if (!auth) return res.status(401).json({ success: false, message: "Unauthorized" });
   try {
     const payload = jwt.verify(auth, JWT_SECRET);
