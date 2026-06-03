@@ -67,17 +67,18 @@ app.post("/api/auth/register", async (req, res) => {
     const { name, email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required" });
 
-    if (registeredUsers.has(email)) {
+    const normalizedEmail = String(email).trim().toLowerCase();
+    if (registeredUsers.has(normalizedEmail)) {
       return res.status(400).json({ success: false, message: "Email already registered" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
     const id = new mongoose.Types.ObjectId().toString();
-    registeredUsers.set(email, { id, name, email, password: hashed });
+    registeredUsers.set(normalizedEmail, { id, name, email: normalizedEmail, password: hashed });
 
-    const token = jwt.sign({ id, name, email }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ id, name, email: normalizedEmail }, JWT_SECRET, { expiresIn: "7d" });
     setAuthCookie(res, token);
-    res.status(201).json({ success: true, user: { id, name, email } });
+    res.status(201).json({ success: true, user: { id, name, email: normalizedEmail } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -88,7 +89,8 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required" });
 
-    const stored = registeredUsers.get(email);
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const stored = registeredUsers.get(normalizedEmail);
     if (!stored) return res.status(400).json({ success: false, message: "Invalid credentials" });
 
     const ok = await bcrypt.compare(password, stored.password);
