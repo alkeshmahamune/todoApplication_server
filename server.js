@@ -2,13 +2,15 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const mongoose = require("mongoose");
 const { connectDB } = require("./db");
 const { PORT, JWT_SECRET } = require("./env");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { Todo, User } = require("./schema");
+const { Todo } = require("./schema");
 
 const COOKIE_NAME = "todo_token";
+const registeredUsers = new Map();
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -65,14 +67,17 @@ app.post("/api/auth/register", async (req, res) => {
     const { name, email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required" });
 
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ success: false, message: "Email already registered" });
+    if (registeredUsers.has(email)) {
+      return res.status(400).json({ success: false, message: "Email already registered" });
+    }
 
     const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hashed });
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
+    const id = new mongoose.Types.ObjectId().toString();
+    registeredUsers.set(email, { id, name, email, password: hashed });
+
+    const token = jwt.sign({ id, name, email }, JWT_SECRET, { expiresIn: "7d" });
     setAuthCookie(res, token);
-    res.status(201).json({ success: true, user: { id: user._id, name: user.name, email: user.email } });
+    res.status(201).json({ success: true, user: { id, name, email } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -83,15 +88,15 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required" });
 
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ success: false, message: "Invalid credentials" });
+    const stored = registeredUsers.get(email);
+    if (!stored) return res.status(400).json({ success: false, message: "Invalid credentials" });
 
-    const ok = await bcrypt.compare(password, user.password);
+    const ok = await bcrypt.compare(password, stored.password);
     if (!ok) return res.status(400).json({ success: false, message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ id: stored.id, name: stored.name, email: stored.email }, JWT_SECRET, { expiresIn: "7d" });
     setAuthCookie(res, token);
-    res.json({ success: true, user: { id: user._id, name: user.name, email: user.email } });
+    res.json({ success: true, user: { id: stored.id, name: stored.name, email: stored.email } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -104,9 +109,9 @@ app.post("/api/auth/logout", (req, res) => {
 
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select("_id name email");
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
-    res.json({ success: true, user });
+    const payload = jwt.verify(getCookieToken(req), JWT_SECRET);
+    const { id, name, email } = payload;
+    res.json({ success: true, user: { id, name, email } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
