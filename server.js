@@ -7,9 +7,33 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { Todo, User } = require("./schema");
 
+const COOKIE_NAME = "todo_token";
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
+
+function getCookieToken(req) {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return null;
+  return cookieHeader.split(";").map(c => c.trim()).find(c => c.startsWith(`${COOKIE_NAME}=`))?.split("=")[1] || null;
+}
+
+function setAuthCookie(res, token) {
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+}
+
+function clearAuthCookie(res) {
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  });
+}
 
 // simple request logger for debugging
 app.use((req, res, next) => {
@@ -21,7 +45,8 @@ const apiBase = "/api/todos";
 
 // --- Auth middleware
 function authMiddleware(req, res, next) {
-  const auth = req.headers.authorization && req.headers.authorization.split(" ")[1];
+  const authHeader = req.headers.authorization;
+  const auth = authHeader?.split(" ")[1] || getCookieToken(req);
   if (!auth) return res.status(401).json({ success: false, message: "Unauthorized" });
   try {
     const payload = jwt.verify(auth, JWT_SECRET);
@@ -44,7 +69,8 @@ app.post("/api/auth/register", async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     const user = await User.create({ name, email, password: hashed });
     const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
-    res.status(201).json({ success: true, token, user: { id: user._id, name: user.name, email: user.email } });
+    setAuthCookie(res, token);
+    res.status(201).json({ success: true, user: { id: user._id, name: user.name, email: user.email } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -62,10 +88,16 @@ app.post("/api/auth/login", async (req, res) => {
     if (!ok) return res.status(400).json({ success: false, message: "Invalid credentials" });
 
     const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user: { id: user._id, name: user.name, email: user.email } });
+    setAuthCookie(res, token);
+    res.json({ success: true, user: { id: user._id, name: user.name, email: user.email } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  clearAuthCookie(res);
+  res.json({ success: true, message: "Logged out" });
 });
 
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
